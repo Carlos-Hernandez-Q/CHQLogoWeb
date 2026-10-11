@@ -1,0 +1,14 @@
+.pio/
+.vscode/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+secrets.h
+*.bak
+dist/
+codex/
+.codex/
+.env.*
+!.env.example
+*.log

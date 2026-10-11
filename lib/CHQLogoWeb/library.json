@@ -1,0 +1,10 @@
+{
+  "name": "CHQLogoWeb",
+  "version": "1.1.0",
+  "description": "Experimental ESP32 LOGO! HTTP/HTTPS AJAX client with configurable protocol profiles. Physical firmware compatibility remains unverified. NO Modbus.",
+  "keywords": ["esp32", "logo", "http", "ajax", "automation", "experimental"],
+  "authors": [{"name": "CHQ Labs", "url": "https://github.com/Carlos-Hernandez-Q"}],
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32"],
+  "headers": ["CHQLogoWeb.h"]
+}
