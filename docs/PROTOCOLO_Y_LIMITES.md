@@ -1,51 +1,57 @@
-# Protocolo HTTP/HTTPS experimental — CHQLogoWeb 1.1
+# Protocolo y límites
 
-## Flujo actual
+## Sesión
 
-1. POST a la ruta del perfil, por defecto `/AJAX`, con `Security-Hint: p` y `UAMCHAL:3,4,a,b,c,d`.
-2. Exigir tres campos: `700,<hint_temporal>,<desafío_uint32>`. Código y longitud del hint configurables por perfil.
-3. CRC32 IEEE de `password + "+" + desafío_decimal`, truncado a 32 bytes UTF-8; XOR con el desafío.
-4. XOR de las cuatro claves con el desafío.
-5. Publicar `UAMLOGIN:<usuario>,<prueba_password>,<prueba_desafío>` con el hint temporal.
-6. Exigir dos campos `700,<hint_sesión>` y un token apto para cabecera HTTP.
-7. Utilizar el hint para GETVARS/SETVARS.
+El login usa UAMCHAL/UAMLOGIN. La sesión se conserva en RAM y se recupera desde loop cuando corresponde. Cada solicitud usa POST en /AJAX y abre/cierra TCP. endSession descarta el token local; no confirma logout remoto. end detiene además el modo gestionado, sin desconectar Wi-Fi.
 
-El mock reproduce esta hipótesis. Las pruebas C++ comprueban la implementación y vectores CRC independientes, pero ningún firmware físico está validado. No hay algoritmo alternativo de autenticación ni detección automática de firmware.
+CHQLogoConfig usa el perfil logo8AjaxExperimental. M están habilitadas; AM se habilitan por separado. El perfil mockV1 conserva el laboratorio anterior. Las capacidades de un perfil describen al cliente, no certifican un firmware.
 
-## Mensajes del perfil MockV1
+## Comandos observados
 
-| Acción | Cuerpo |
-| --- | --- |
-| Leer AM1 | `GETVARS:v1,20,0,0,1,1` |
-| Escribir AM1=250 | `SETVARS:v0,20,0,0,1,1,00FA` |
-| Leer M1 | `GETVARS:v1,131,0,0,1,1` |
-| Escribir M1=1 | `SETVARS:v0,131,0,0,1,1,01` |
+```text
+GETVARS:v1,131,0,0,1,1
+SETVARS:v0,131,0,1,1,1,01
+GETVARS:_local_=v1,AM..4:2-1
+SETVARS:_local_=v0,AM..4:2-1,0028
+```
 
-Los perfiles iniciales conservan tipo 20/131, área 0, índices desde cero, tamaño 1 y cantidad 1. Ruta, usuario, IDs, tipos, área, tamaños, bases/pasos de dirección, rangos y ancho digital se concentran en `CHQLogoProfile`. `analogSize` y `digitalSize` son independientes; las bases/pasos se validan para evitar direcciones truncadas. Estos parámetros se ajustan solo con capturas reales. AM sigue siendo hipótesis de una palabra hexadecimal de 16 bits. El perfil físico inicial deshabilita lectura/escritura AM.
+Corresponden a leer M1, escribir M2=1, leer AM2 y escribir AM2=40. La AM simbólica usa selector word=4, base 1 y paso 1; el número 2 representa AM2. El hexadecimal simbólico de escritura se envía en minúsculas, como el portal observado.
 
-## Interpretación de respuestas
+Las respuestas M tienen dos dígitos hexadecimales, con valor solo 0/1; AM tienen cuatro y se interpretan como int16_t. Se rechazan índices y valores fuera de rango antes de convertirlos.
 
-El parser admite el subconjunto `<rs><r .../></rs>`, comillas simples/dobles, espacios en atributos, filas vacías con cierre explícito, declaración XML y comentarios. Comprueba el documento completo, atributos duplicados, presencia de `i/e` y un único resultado con el ID esperado. No acepta DTD, entidades ni elementos desconocidos. Una variante que los utilice requiere adaptar el parser con una captura real.
+## Validación
 
-`e` debe pertenecer a la misma fila que el valor. Se exigen cuatro dígitos hexadecimales para AM y el ancho digital del perfil. Un ACK de escritura puede omitir `v`; su éxito confirma aceptación del mensaje, no persistencia del valor en el ciclo del PLC.
+XML completo con un único resultado, ID exacto, atributos asociados, hexadecimal del ancho requerido y ausencia de duplicados o datos sobrantes. Se rechazan cuerpos truncados o malformados. La detección de IDs solo publica el resultado tras dos respuestas válidas que corroboran eco o ID fijo.
 
-Las lecturas conservan el argumento de salida en caso de error. Se rechazan marcas digitales diferentes de 0/1. Los errores XML guardan su código en diagnóstico. Una respuesta UAM 7xx diferente del éxito del perfil, incluso con HTTP 200, descarta la sesión; una respuesta XML malformada o una página inesperada también la descarta. Esto es una política conservadora, pendiente de contrastar con errores reales.
+El rechazo de una lectura invalida la sesión cuando corresponde. Una escritura con respuesta irregular puede haberse aplicado; el modo gestionado permite comprobar por lectura sin volver a enviar. Un rechazo XML válido permanece Rejected, salvo el código AM configurado expresamente para el equipo. No se cambia el significado global de e=16 ni de e=1.
 
 ## Transporte
 
-- POST HTTP/1.1, `Connection: close`, `Accept-Encoding: identity`.
-- Content-Length, chunked o cuerpo delimitado por cierre; sin redirecciones ni compresión.
-- Límite de cuerpo predeterminado 2048 bytes, configurable 64..16384. Cabeceras: máximo 512 bytes por línea y 8192 bytes en total, incluidos trailers.
-- Los cuerpos incompletos se descartan. Los cuerpos de HTTP diferente de 200 no se leen ni se incluyen en errores.
-- `setTimeout(ms)` establece por separado el timeout de conexión y el plazo total de envío/lectura tras conectar. Dos etapas, no un único plazo de pared.
-- Nuestros bucles controlan el tiempo total con resta unsigned de millis(), incluso frente a servidor que envía lentamente. DNS, TCP, TLS y una llamada individual a write() dependen del core; en Arduino 2.x algunos límites TLS/socket se expresan en segundos. No prometer precisión de milisegundos ni tiempo real estricto.
-- HTTPS exige CA PEM propia, reloj correcto y host acorde al certificado. No hay `setInsecure()`, fallback ni aceptación automática de certificados.
-- `CHQLogoTransport` es sustituible; un transporte externo debe devolver cuerpo completo, HTTP y error coherentes. La vida del transporte debe exceder la del cliente.
+| Límite | Valor |
+| --- | --- |
+| Cuerpo predeterminado | 2048 bytes |
+| Cuerpo configurable | 64..16384 bytes |
+| Cabeceras totales | 8192 bytes |
+| Línea HTTP | 512 bytes |
+| Envío por fragmento | Hasta 128 bytes |
+| Variables vigiladas | 16 M/AM combinadas |
 
-## Sesiones y uso
+Se admiten Content-Length, chunked y cuerpo terminado por cierre. No se siguen redirecciones ni se admiten cuerpos comprimidos. Conexión y E/S tienen presupuestos independientes; la E/S comparte un plazo para envío, cabeceras y cuerpo. DNS/TCP/TLS dependen también del core ESP32 y no ofrecen tiempo real estricto.
 
-No se guarda la contraseña ni se reautentica automáticamente. 401/403 y pérdida de Wi-Fi descartan el token. El cambio de perfil, transporte HTTP/HTTPS o opciones de conexión descarta la sesión; cambiar únicamente el timeout no lo hace.
+TCP_NODELAY se solicita tras conectar; diagnostics indica si pudo aplicarse. Sus tiempos por fase distinguen conexión, envío, recepción y cierre. elapsedMs incluye cierre. receiveMs incluye espera del servidor y red.
 
-No se reintentan escrituras. Una petición puede haberse aplicado antes de perder su respuesta. El programa debe leer la variable y decidir cómo recuperarse; repetir una orden a ciegas no es una confirmación.
+HTTPS exige CA de confianza, host correcto y reloj válido. Sin modo inseguro ni fallback automático a HTTP. Ensayo físico pendiente.
 
-Una instancia no es segura entre tareas simultáneas. Los rangos configurados son alcance del cliente, no capacidades descubiertas del PLC. No hay API VM, teclas, reloj, RUN/STOP ni cambios de usuarios/configuración. `exchangeRaw` conserva una puerta de ingeniería inversa, por lo que su usuario debe comprobar semántica y permisos.
+## Interfaz gestionada
+
+begin configura, loop atiende y end detiene. readM/AM de un argumento devuelven cache local; available distingue una muestra válida del 0 inicial o un dato anterior a la desconexión. setM/AM acepta una intención local, conserva el último valor aún no enviado y verifica el intento mediante GET nuevo. Un intento nunca se reproduce automáticamente.
+
+Las marcas se registran con watch, read o set; hasta 16 únicas, sin baja individual. La configuración inicial limita M1..M32 y AM1..AM8. Más variables implican más HTTP, sin lotes.
+
+No hay suscripción push, tarea de fondo, acceso concurrente, VM, RUN/STOP, reloj del PLC, usuarios ni configuración del programa. La red y sus credenciales pertenecen a la aplicación.
+
+## Referencias
+
+El formato AM se contrastó con el JavaScript servido por el propio portal del equipo ensayado. El simulador de este repositorio sirve para regresión local y no representa todos los servidores Siemens.
+
+Proyectos consultados durante el desarrollo: [siemens-logo-rest](https://github.com/jankeymeulen/siemens-logo-rest) y [Siemens-LOGO-Python-Client](https://github.com/j-siderius/Siemens-LOGO-Python-Client). Son referencias independientes, no dependencias distribuidas con la librería.

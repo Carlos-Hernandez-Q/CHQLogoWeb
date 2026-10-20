@@ -204,18 +204,29 @@ class Esp32Transport : public CHQLogoTransport {
   }
 
  private:
+  static void closeAndMeasure(WiFiClient& client, CHQLogoDiagnostics& diagnostics, uint32_t started) {
+    const uint32_t closing = millis();
+    client.stop();
+    diagnostics.closeMs = millis() - closing;
+    diagnostics.elapsedMs = millis() - started;
+  }
+
   static bool exchange(WiFiClient& client, const String& host, uint16_t port,
                        const String& path, const String& command, const String& hint,
                        const CHQLogoConnectionOptions& options, String& response,
                        CHQLogoDiagnostics& diagnostics, uint32_t started) {
     // DNS/TCP/TLS dependen de los límites del core; nuestros bucles usan millis().
     client.setTimeout((options.ioTimeoutMs + 999UL) / 1000UL);
-    if (!client.connect(host.c_str(), port, options.connectTimeoutMs)) {
-      diagnostics.elapsedMs = millis() - started;
+    const uint32_t connecting = millis();
+    const bool connected = client.connect(host.c_str(), port, options.connectTimeoutMs);
+    diagnostics.connectMs = millis() - connecting;
+    if (!connected) {
       diagnostics.error = CHQLogoError::ConnectionFailed;
-      client.stop();
+      closeAndMeasure(client, diagnostics, started);
       return false;
     }
+    const int noDelayResult = client.setNoDelay(options.tcpNoDelay);
+    diagnostics.tcpNoDelayApplied = options.tcpNoDelay && noDelayResult == 0;
     char header[768];
     const int headerLength = snprintf(header, sizeof(header),
         "POST %s HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\nAccept-Encoding: identity\r\n"
@@ -227,15 +238,20 @@ class Esp32Transport : public CHQLogoTransport {
         !request.reserve(static_cast<size_t>(headerLength) + command.length()) ||
         !request.concat(header) || !request.concat(command)) {
       diagnostics.error = CHQLogoError::OutOfMemory;
-      diagnostics.elapsedMs = millis() - started;
-      client.stop();
+      closeAndMeasure(client, diagnostics, started);
       return false;
     }
     HttpReader reader(client, options, diagnostics);
-    const bool ok = reader.write(request) && reader.read(response);
-    diagnostics.elapsedMs = millis() - started;
+    const uint32_t sending = millis();
+    bool ok = reader.write(request);
+    diagnostics.sendMs = millis() - sending;
+    if (ok) {
+      const uint32_t receiving = millis();
+      ok = reader.read(response);
+      diagnostics.receiveMs = millis() - receiving;
+    }
     diagnostics.responseBytes = response.length();
-    client.stop();
+    closeAndMeasure(client, diagnostics, started);
     if (!ok) response = "";
     return ok;
   }

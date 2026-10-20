@@ -1,59 +1,42 @@
-# Compatibilidad por modelo y firmware — 1.1.0
+# Compatibilidad
 
-Objetivo: mantener una API común y adaptar variantes del portal web LOGO! 8 con evidencia de cada equipo. Actualmente no se dispone de PLC físico.
+Versión preparada: 1.5.0. Actualización: 20 de octubre de 2026.
 
-## Matriz inicial
+## Unidad física ensayada
 
-| Generación anunciada | Modelo / firmware exactos | Login | Leer M | Escribir M | Leer AM | Escribir AM | HTTP/HTTPS |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| LOGO! 8.0 | Pendiente | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar |
-| LOGO! 8.1 | Pendiente | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar |
-| LOGO! 8.2 | Pendiente | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar |
-| LOGO! 8.3 | Pendiente | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar |
-| LOGO! 8.4 | Pendiente | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar |
-| Otra revisión de LOGO! 8 | Pendiente | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar | Sin validar |
+| Elemento | Evidencia |
+| --- | --- |
+| Cliente | ESP32-S3, placa PlatformIO esp32s3usbotg, Arduino ESP32 2.0.17 |
+| Transporte | HTTP, puerto 80, LAN con Wi-Fi del ESP32 |
+| LOGO | Familia LOGO! 8; referencia exacta y firmware aún sin registrar |
+| Autenticación | Login y recuperación de sesión observados |
+| M | M1/M2 leídas; M2 en ambos sentidos y relé Q1 confirmado por el usuario |
+| AM | AM2 simbólica leída con valores 1, 200, 600, 700, 800, 10000 y 32767 |
+| Escritura AM | Valores entre 30 y 200 observados por lectura posterior; respuesta e=16 |
+| HTTPS | Implementación y pruebas locales; falta ensayo en PLC físico |
 
-La generación comercial no identifica necesariamente todos los detalles del portal. Se registra la referencia completa y el firmware de cada unidad. Una prueba en una versión no certifica las demás.
+La lectura digital devuelve un ID eco, v1 al solicitar v1. La biblioteca lo corrobora con dos consultas por sesión. El aprendizaje no identifica la versión del equipo.
 
-Estados a utilizar después de cada prueba: **verificado** (con evidencia), **experimental** (hipótesis), **no soportado** (diferencia identificada) y **sin validar**.
+## Respuestas de escritura observadas
 
-## Parámetros de los perfiles
+- M2 se aplica, pero el cuerpo recibido no es XML válido: `<rs><r i='v0' e='1'/>/<rs>`. Se conserva el error y se comprueba por una lectura nueva; no se acepta como ACK ni se reenvía.
+- AM2 se aplica y devuelve XML válido con e=16. Se habilita expresamente `analogWriteReadbackCode=16` para esa unidad, solo en setAM simbólico. Su valor predeterminado es 0. La API directa sigue informando rechazo.
+- Matched solo informa coincidencia por lectura posterior. Si el valor ya era igual, no prueba que se haya escrito.
 
-- Ruta AJAX y nombre del usuario web.
-- Código de éxito UAM y longitud del token (1..64 caracteres ASCII alfanuméricos, guion/underscore).
-- IDs de solicitud y respuesta. El ID de respuesta no tiene por qué ser igual al enviado.
-- Códigos de tipo para marcas M/AM, área y tamaños independientes (`analogSize`, `digitalSize`).
-- Base y paso de dirección independientes (`amAddressBase`, `mAddressBase`, `amAddressStride`, `mAddressStride`); por defecto base 0 y paso 1. Se rechaza un perfil cuyo último índice exceda 16 bits.
-- Cantidad de marcas dentro del alcance validado; no hay sondeo automático de direcciones.
-- Ancho hexadecimal digital (1..4); AM se limita a palabra hexadecimal de 16 bits.
-- Habilitación independiente de lectura/escritura digital y analógica.
+## Rendimiento observado
 
-No hay perfiles nominales “8.0”, “8.1”, etc. que repitan la misma hipótesis y aparenten validación. `mockV1()` mantiene el comportamiento del simulador. `logo8AjaxExperimental()` inicia la prueba física con M; AM debe habilitarse después de capturar su formato. El ejemplo físico deshabilita además la escritura digital por defecto.
+Mediciones anteriores a la incorporación de TCP_NODELAY:
 
-Para una variante confirmada:
+| Ensayo | Resultado aproximado |
+| --- | --- |
+| M1, M2 y AM2 con verificación | 0.82 escrituras AM confirmadas/s |
+| Solo AM2 con verificación | 1.94 confirmadas/s |
+| Solo AM2, Wi-Fi sin ahorro | 2.00 confirmadas/s; HTTP medio 249 ms |
 
-```cpp
-CHQLogoProfile p = CHQLogoProfile::logo8AjaxExperimental();
-p.name = "REFERENCIA-FIRMWARE-ENSAYADO";
-// Ajustar aquí SOLO lo observado, por ejemplo readResponseId o ajaxPath.
-// Habilitar AM cuando se haya confirmado el formato de palabra hexadecimal.
-if (!logo.setProfile(p)) Serial.println(logo.lastError());
-```
+Son resultados de esa red y esa unidad, no límites garantizados. Un objetivo de generación de 10 ms no produjo una actualización cada 10 ms. Cada cambio confirmado necesita SET y GET; más marcas añaden consultas individuales. La mejora de TCP_NODELAY aún requiere medición física.
 
-Cambiar el nombre no altera ningún formato. No se usa el texto de modelo/firmware del ejemplo como detector ni como prueba de compatibilidad.
+## Pendiente de ampliar
 
-## Diferencias que requieren implementar código adicional
+Registrar referencia y firmware; probar otras unidades y marcas, valores negativos en PLC, HTTPS y recuperación tras un corte físico de red/alimentación. Los nuevos ejemplos y el arranque analógico 1.5.0 compilan y tienen pruebas locales; no se han cargado automáticamente al ESP32.
 
-Un firmware con otro algoritmo de autenticación, otro formato de comandos, valores decimales/binarios o respuestas fuera del subconjunto XML admitido necesita una implementación nueva, acompañada de capturas y tests. Los perfiles actuales parametrizan la familia AJAX UAMCHAL/UAMLOGIN; no hacen universal un protocolo desconocido.
-
-El transporte HTTP/HTTPS queda separado mediante `CHQLogoTransport`, para no mezclar cambios de red con la semántica de variables. Ethernet sería un transporte adicional; no está implementado.
-
-## Evidencia que se conserva por equipo
-
-Referencia, firmware, Soft Comfort, HTTP/HTTPS y puerto, perfil exacto, capacidades habilitadas, estado STOP/RUN, comando/resultado sanitizados y lectura de comprobación en el monitor del PLC. Mantener certificados de confianza y contraseñas fuera de los archivos públicos de resultados.
-
-Las referencias públicas son investigación independiente, no certificación de esta librería. La ayuda oficial de Siemens documenta opciones HTTP/HTTPS del servidor, pero no valida por sí misma esta implementación AJAX:
-
-- https://github.com/jankeymeulen/siemens-logo-rest
-- https://github.com/j-siderius/Siemens-LOGO-Python-Client
-- https://cache.industry.siemens.com/dl/files/807/109974807/att_1299328/v4/Help_en-US_en-US.pdf
+Los perfiles permiten ajustar variantes del mismo protocolo AJAX. No se anuncia compatibilidad certificada con todas las versiones LOGO! 8. Un cambio de autenticación o formato fundamental puede requerir código adicional.

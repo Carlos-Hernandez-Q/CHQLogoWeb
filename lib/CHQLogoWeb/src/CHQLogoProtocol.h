@@ -30,5 +30,9 @@ bool parseLogin(const char* bytes, size_t length, uint16_t successCode,
                 size_t hintLength, char (&hint)[65]);
 ParseResult parseScalar(const char* bytes, size_t length, const char* resultId,
                        size_t hexDigits, bool requireValue, ScalarReply& reply);
+// Descubrimiento de lectura: documento completo y EXACTAMENTE un resultado.
+// Solo entrega ID (ASCII seguro, 1..32) despues de validar una lectura sin error.
+ParseResult discoverScalar(const char* bytes, size_t length, size_t hexDigits,
+                          ScalarReply& reply, char (&resultId)[33]);
 
 }  // namespace chqlogo

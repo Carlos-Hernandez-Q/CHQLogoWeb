@@ -193,9 +193,10 @@ bool parseLogin(const char* bytes, size_t length, uint16_t successCode,
   return true;
 }
 
-ParseResult parseScalar(const char* bytes, size_t length, const char* resultId,
-                       size_t hexDigits, bool requireValue, ScalarReply& reply) {
-  if (!bytes || !resultId || !hexDigits || hexDigits > 4) return ParseResult::Malformed;
+static ParseResult parseScalarImpl(const char* bytes, size_t length, const char* resultId,
+                                  size_t hexDigits, bool requireValue, ScalarReply& reply,
+                                  char* discoveredId) {
+  if (!bytes || (!resultId && !discoveredId) || !hexDigits || hexDigits > 4) return ParseResult::Malformed;
   Xml xml(bytes, length);
   xml.whitespace();
   if (xml.consume("<?xml ")) {
@@ -210,6 +211,7 @@ ParseResult parseScalar(const char* bytes, size_t length, const char* resultId,
   bool empty;
   if (!xml.attributes(id, error, value, empty) || empty) return ParseResult::Malformed;
   bool found = false, duplicate = false;
+  Span selectedId{nullptr, 0};
   ScalarReply parsed{};
   for (;;) {
     if (!xml.comments()) return ParseResult::Malformed;
@@ -222,7 +224,16 @@ ParseResult parseScalar(const char* bytes, size_t length, const char* resultId,
     if (!empty) {
       if (!xml.comments() || !xml.consume("</r>")) return ParseResult::Malformed;
     }
-    if (equal(id, resultId)) {
+    if (discoveredId || equal(id, resultId)) {
+      if (discoveredId) {
+        if (id.size > 32) return ParseResult::Malformed;
+        for (size_t i = 0; i < id.size; ++i) {
+          const char c = id.data[i];
+          if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '_' || c == '-')) return ParseResult::Malformed;
+        }
+        selectedId = id;
+      }
       if (found) duplicate = true;
       found = true;
       parsed.error = static_cast<uint16_t>(errorCode);
@@ -236,7 +247,21 @@ ParseResult parseScalar(const char* bytes, size_t length, const char* resultId,
   if (duplicate) return ParseResult::DuplicateResult;
   if (!found) return ParseResult::MissingResult;
   reply = parsed;
+  if (discoveredId && !parsed.error) {
+    memcpy(discoveredId, selectedId.data, selectedId.size);
+    discoveredId[selectedId.size] = '\0';
+  }
   return parsed.error ? ParseResult::Rejected : ParseResult::Ok;
+}
+
+ParseResult parseScalar(const char* bytes, size_t length, const char* resultId,
+                       size_t hexDigits, bool requireValue, ScalarReply& reply) {
+  return parseScalarImpl(bytes, length, resultId, hexDigits, requireValue, reply, nullptr);
+}
+
+ParseResult discoverScalar(const char* bytes, size_t length, size_t hexDigits,
+                          ScalarReply& reply, char (&resultId)[33]) {
+  return parseScalarImpl(bytes, length, nullptr, hexDigits, true, reply, resultId);
 }
 
 }  // namespace chqlogo

@@ -7,6 +7,25 @@
 #include <cctype>
 #include <string>
 #include <type_traits>
+#include <cstdarg>
+#include <cstdio>
+
+class Print {
+ public:
+  virtual ~Print() = default;
+  virtual size_t write(uint8_t byte) = 0;
+  size_t print(const char* text) {
+    size_t count = 0;
+    while (*text) count += write(static_cast<uint8_t>(*text++));
+    return count;
+  }
+  size_t println(const char* text) { return print(text) + print("\n"); }
+  size_t printf(const char* format, ...) {
+    char buffer[512]; va_list args; va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args); va_end(args);
+    return print(buffer);
+  }
+};
 
 namespace fake { extern bool allowStringReserve; extern int concatBudget; }
 
