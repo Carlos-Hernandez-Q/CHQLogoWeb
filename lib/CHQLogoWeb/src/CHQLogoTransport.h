@@ -26,6 +26,8 @@ struct CHQLogoDiagnostics {
 struct CHQLogoConnectionOptions {
   bool https = false;
   bool tcpNoDelay = true;  // Evita agrupar los pequenos envios de una peticion HTTP.
+  // CHQLogoWeb selecciona esta cabecera al usar el login Session-Id/SHA-256.
+  bool sessionIdHeader = false;
   String rootCA;  // Copia propia del PEM; nunca se utiliza setInsecure().
   uint16_t connectTimeoutMs = 4000;
   uint16_t ioTimeoutMs = 4000;

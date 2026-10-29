@@ -227,12 +227,23 @@ class Esp32Transport : public CHQLogoTransport {
     }
     const int noDelayResult = client.setNoDelay(options.tcpNoDelay);
     diagnostics.tcpNoDelayApplied = options.tcpNoDelay && noDelayResult == 0;
+    char authentication[160]{};
+    const int authenticationLength = options.sessionIdHeader
+        ? (hint.isEmpty() ? 0 : snprintf(authentication, sizeof(authentication),
+            "Cookie: Session-Id=%s\r\n", hint.c_str()))
+        : snprintf(authentication, sizeof(authentication), "Security-Hint: %s\r\n", hint.c_str());
+    if (authenticationLength < 0 || static_cast<size_t>(authenticationLength) >= sizeof(authentication)) {
+      diagnostics.error = CHQLogoError::InvalidArgument;
+      closeAndMeasure(client, diagnostics, started);
+      return false;
+    }
     char header[768];
     const int headerLength = snprintf(header, sizeof(header),
         "POST %s HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\nAccept-Encoding: identity\r\n"
-        "Content-Type: application/x-www-form-urlencoded\r\nSecurity-Hint: %s\r\n"
+        "Content-Type: %s\r\n%s"
         "Content-Length: %u\r\n\r\n", path.c_str(), host.c_str(), static_cast<unsigned>(port),
-        hint.c_str(), static_cast<unsigned>(command.length()));
+        options.sessionIdHeader ? "text/plain;charset=UTF-8" : "application/x-www-form-urlencoded",
+        authentication, static_cast<unsigned>(command.length()));
     String request;
     if (headerLength < 0 || static_cast<size_t>(headerLength) >= sizeof(header) ||
         !request.reserve(static_cast<size_t>(headerLength) + command.length()) ||

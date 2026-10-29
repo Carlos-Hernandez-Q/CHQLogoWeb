@@ -4,9 +4,12 @@
 #include <stdint.h>
 #include "CHQLogoTransport.h"
 
+enum class CHQLogoAuth { LegacyAjax, SessionSha256, Auto };
+
 // Formato y capacidades del portal AJAX. Los perfiles se ajustan por equipo.
 struct CHQLogoProfile {
   String name = "MockV1";
+  CHQLogoAuth authentication = CHQLogoAuth::LegacyAjax;
   String ajaxPath = "/AJAX";
   String webUser = "Web User";
   String readRequestId = "v1";
@@ -44,8 +47,8 @@ struct CHQLogoProfile {
   static CHQLogoProfile logo8AjaxExperimental();
 };
 
-// Configuracion simple del portal AJAX. La deteccion solo aprende IDs de lectura;
-// no identifica firmware, algoritmos de login, tipos ni direcciones.
+// Configuracion simple del portal. Selecciona login y aprende IDs de lectura;
+// no identifica firmware ni descubre tipos o direcciones mediante escrituras.
 struct CHQLogoConfig {
   explicit CHQLogoConfig(const String& logoKey, const String& webUser = "Web User",
                          Print* output = nullptr);
@@ -174,6 +177,7 @@ class CHQLogoWeb {
   bool _autoReadId = false;
   bool _readIdDetected = false;
   bool _suspendWrites = false;
+  bool _usingSessionId = false;
 
   bool service();
   bool waitForReady(bool analog, uint32_t timeoutMs, int32_t markerNumber);
@@ -192,6 +196,10 @@ class CHQLogoWeb {
   bool fail(CHQLogoError code, const String& message);
   void resetDiagnostics();
   bool post(const String& command, const String& hint, String& response);
+  bool postAt(const String& path, const String& command, const String& hint,
+              String& response);
+  bool loginLegacy(const String& password);
+  bool loginSession(const String& password);
   String scalarCommand(const String& verb, const String& requestId, uint16_t kind,
                        uint16_t address, uint8_t size, bool symbolic) const;
   bool writeScalar(uint16_t kind, uint16_t address, uint8_t size, uint16_t value,

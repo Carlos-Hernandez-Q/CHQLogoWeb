@@ -1,4 +1,4 @@
-# CHQLogoWeb 1.5.0
+# CHQLogoWeb 1.6.0
 
 Cliente Arduino para leer y escribir marcas M/AM de LOGO! 8 desde ESP32 mediante HTTP/HTTPS.
 
@@ -98,7 +98,7 @@ Esta excepción solo permite pasar a verificación con `setAM`, formato simbóli
 | `autoReadId` | true |
 | `debug` | nullptr; el constructor admite &Serial |
 
-La detección consulta dos veces la misma marca con IDs distintos y aprende si el portal devuelve eco o un ID fijo. Luego exige ese ID exacto hasta perder sesión. No detecta firmware, algoritmo de login ni direcciones. Configuración manual:
+La detección de IDs consulta dos veces la misma marca con IDs distintos y aprende si el portal devuelve eco o un ID fijo. Luego exige ese ID exacto hasta perder sesión. No identifica firmware ni descubre direcciones. Configuración manual:
 
 ```cpp
 config.autoReadId = false;
@@ -107,9 +107,13 @@ config.profile.readResponseId = "v0";  // Usar el ID observado en ese equipo.
 
 `CHQLogoProfile` concentra ruta AJAX, usuario, identificadores, tipos, direcciones y capacidades. `mockV1()` conserva el simulador numérico. El constructor sin begin(config) conserva ese perfil anterior; para la API directa seleccionar explícitamente `logo8AjaxExperimental()` cuando corresponda.
 
+`config.profile.authentication` usa `CHQLogoAuth::Auto` en el arranque simple. Prueba UAMCHAL/UAMLOGIN; si el reto inicial recibe HTTP 403, 404 o 405, prueba `/login/guest/challenge` y `/login/guest/login`. Este segundo método calcula SHA-256 y envía `Cookie: Session-Id=...`; sus marcas M usan el formato simbólico del portal. No cambia de método ante una contraseña rechazada, un timeout o un fallo de GET/SET. Cada reconexión vuelve a comprobar el login.
+
+Para fijar el método de una unidad conocida se puede elegir `CHQLogoAuth::LegacyAjax` o `CHQLogoAuth::SessionSha256` antes de `begin`. El perfil del mock conserva `LegacyAjax`. Esto no cambia las llamadas readM/readAM/setM/setAM ni administra el Wi-Fi. Los transportes externos reciben `options.sessionIdHeader` y deben enviar la cookie cuando sea true; el argumento hint contiene el identificador de sesión.
+
 ## Tiempos y red
 
-`loop()` es síncrono: una llamada puede esperar HTTP o las dos peticiones de login/detección. No hay tarea de fondo ni concurrencia. Llamarlo con frecuencia y usar millis para temporizar. Un delay largo también detiene las consultas.
+`loop()` es síncrono: una llamada puede esperar HTTP, las dos peticiones de login o detección, y la prueba inicial de compatibilidad cuando corresponda. No hay tarea de fondo ni concurrencia. Llamarlo con frecuencia y usar millis para temporizar. Un delay largo también detiene las consultas.
 
 Se reutiliza la sesión, no el socket: cada petición abre/cierra TCP. Más marcas distintas requieren más consultas; no hay lectura por lote. El periodo configurado no garantiza la frecuencia real.
 
@@ -123,6 +127,6 @@ HTTP usa por defecto puerto 80. HTTPS se selecciona antes de begin mediante `use
 
 `readM(numero, salida)`, `readAM(numero, salida)`, `writeM` y `writeAM` hacen HTTP directo. No equivalen a las lecturas locales ni a la cola de estados deseados. `login`, `endSession`, `setProfile`, `setConnectionOptions` y `exchangeRaw` están disponibles para integraciones específicas. No mezclar llamadas concurrentes ni operaciones de red desde callbacks.
 
-Los ejemplos públicos son Simple, LecturaAnalogica y UltrasonicoSimulado. Las pruebas físicas corresponden a una sola unidad; referencia y firmware pendientes de registrar. No se certifican todas las versiones de LOGO! 8.
+Los ejemplos públicos son Simple, LecturaAnalogica y UltrasonicoSimulado. La primera unidad tiene lectura/escritura física comprobada. El segundo PLC tiene login Session-Id/SHA-256 y lecturas M/AM comprobadas desde PC; la integración en ESP32 y los cambios de valor siguen pendientes. Referencias y firmwares pendientes de registrar. No se certifican todas las versiones de LOGO! 8. El manual PDF conserva la guía 1.5.0; las llamadas de los ejemplos mantienen su forma.
 
 CHQ Labs. Licencia pendiente de elección por el autor.

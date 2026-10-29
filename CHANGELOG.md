@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0 - Login Session-Id/SHA-256
+- Arranque simple con seleccion automatica entre UAMCHAL/UAMLOGIN y el login de `/login/guest/challenge` + `/login/guest/login` observado en el segundo PLC.
+- El cambio de metodo solo se permite tras HTTP 403, 404 o 405 en el primer reto; no tras rechazos de clave ni fallos de lectura/escritura. Tambien se puede fijar el metodo en el perfil.
+- Cookie Session-Id, token de 64 caracteres y SHA-256; las respuestas `ok: <token>` aceptan el espacio observado en el portal. M usa formato simbolico en la sesion nueva.
+- Las llamadas del programa, el Wi-Fi externo y las escrituras con verificacion sin reenvio conservan su funcionamiento.
+- Segunda unidad: login y lecturas M1/M2/AM1/AM2 con ceros validos comprobados por Ethernet desde PC. Falta cargar el C++ al ESP32 y observar transiciones en este PLC.
+- 110 casos nativos y 15 pruebas del simulador correctos. Los tres ejemplos y la prueba de lectura del segundo PLC compilan para ESP32-S3. La validacion detallada se registra en docs/VALIDACION.md.
+
 ## 1.5.0 - Ejemplos y manual
 - Tres ejemplos: lectura digital y mando por serie, lectura analogica y sensor simulado con verificacion.
 - waitUntilReadyAM permite esperar una lectura analogica nueva al arrancar, sin registrar marcas digitales.

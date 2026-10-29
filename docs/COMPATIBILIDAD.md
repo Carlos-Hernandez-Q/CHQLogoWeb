@@ -1,6 +1,6 @@
 # Compatibilidad
 
-Versión preparada: 1.5.0. Actualización: 20 de octubre de 2026.
+Versión preparada: 1.6.0. Actualización: 29 de octubre de 2026.
 
 ## Unidad física ensayada
 
@@ -16,6 +16,14 @@ Versión preparada: 1.5.0. Actualización: 20 de octubre de 2026.
 | HTTPS | Implementación y pruebas locales; falta ensayo en PLC físico |
 
 La lectura digital devuelve un ID eco, v1 al solicitar v1. La biblioteca lo corrobora con dos consultas por sesión. El aprendizaje no identifica la versión del equipo.
+
+## Segunda unidad: portal con Session-Id
+
+El portal servido por la segunda unidad usa un login distinto: POST `/login/guest/challenge`, respuesta `ok: <token>` de 64 caracteres, y POST `/login/guest/login` con SHA-256 de usuario + SHA-256 de contraseña + token temporal. La sesión se transmite como cookie Session-Id. Sus archivos JavaScript comentan la transición de portal 8.4; esto no sustituye el registro de la referencia y firmware del PLC.
+
+El reto UAMCHAL anterior enviado a `/AJAX` devuelve HTTP 403. Agregar la cookie Security-Hint y Origin/Referer no resolvió ese rechazo. El atributo de cifrado del canal vale 0.
+
+El usuario comprobó el 29 de octubre login HTTP 200 y lecturas repetidas de M1/M2/AM1/AM2 desde una prueba Python en PC conectada por Ethernet. Todas las muestras compartidas devolvieron 0 válido. Aún falta observar cambios de valor, probar escrituras en esta unidad y cargar la integración C++ al ESP32. No se habilita por defecto la excepción AM e=16 de la primera unidad.
 
 ## Respuestas de escritura observadas
 
@@ -39,4 +47,4 @@ Son resultados de esa red y esa unidad, no límites garantizados. Un objetivo de
 
 Registrar referencia y firmware; probar otras unidades y marcas, valores negativos en PLC, HTTPS y recuperación tras un corte físico de red/alimentación. Los nuevos ejemplos y el arranque analógico 1.5.0 compilan y tienen pruebas locales; no se han cargado automáticamente al ESP32.
 
-Los perfiles permiten ajustar variantes del mismo protocolo AJAX. No se anuncia compatibilidad certificada con todas las versiones LOGO! 8. Un cambio de autenticación o formato fundamental puede requerir código adicional.
+Los perfiles permiten ajustar variantes AJAX y seleccionar login clasico o Session-Id/SHA-256. No se anuncia compatibilidad certificada con todas las versiones LOGO! 8. Otros cambios de autenticación o formato pueden requerir código adicional.

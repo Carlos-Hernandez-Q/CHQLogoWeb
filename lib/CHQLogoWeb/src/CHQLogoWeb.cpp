@@ -46,6 +46,7 @@ CHQLogoProfile CHQLogoProfile::mockV1() { return CHQLogoProfile{}; }
 CHQLogoProfile CHQLogoProfile::logo8AjaxExperimental() {
   CHQLogoProfile p;
   p.name = "LOGO8-AJAX-experimental";
+  p.authentication = CHQLogoAuth::Auto;
   // Formato de js/variable.js del PLC: AM..4:numero-1, indice desde 1.
   p.analogSize = 4;
   p.symbolicAnalog = true;
@@ -71,7 +72,12 @@ bool CHQLogoWeb::fail(CHQLogoError code, const String& message) {
   _lastError = message;
   return false;
 }
-void CHQLogoWeb::endSession() { _sessionHint = ""; _readIdDetected = false; invalidateCache(); }
+void CHQLogoWeb::endSession() {
+  _sessionHint = "";
+  _usingSessionId = _options.sessionIdHeader = false;
+  _readIdDetected = false;
+  invalidateCache();
+}
 bool CHQLogoWeb::isAuthenticated() const { return !_sessionHint.isEmpty(); }
 String CHQLogoWeb::lastError() const { return _lastError; }
 const CHQLogoDiagnostics& CHQLogoWeb::diagnostics() const { return _diagnostics; }
@@ -387,7 +393,10 @@ void CHQLogoWeb::invalidateWritten(bool analog, int32_t number) {
 
 bool CHQLogoWeb::setProfile(const CHQLogoProfile& profile) {
   resetDiagnostics();
-  if (!safeText(profile.name, 64, true) || !safeText(profile.ajaxPath, 128) ||
+  if ((profile.authentication != CHQLogoAuth::LegacyAjax &&
+       profile.authentication != CHQLogoAuth::SessionSha256 &&
+       profile.authentication != CHQLogoAuth::Auto) ||
+      !safeText(profile.name, 64, true) || !safeText(profile.ajaxPath, 128) ||
       profile.ajaxPath[0] != '/' || profile.ajaxPath.indexOf('#') >= 0 ||
       !safeText(profile.webUser, 64, true) || !safeId(profile.readRequestId) ||
       !safeId(profile.readResponseId) || !safeId(profile.writeRequestId) ||
@@ -443,12 +452,23 @@ void CHQLogoWeb::useHTTP(uint16_t port) {
 }
 
 bool CHQLogoWeb::post(const String& command, const String& hint, String& response) {
+  if (command.isEmpty()) {
+    response = "";
+    return fail(CHQLogoError::InvalidArgument, "Comando vacio");
+  }
+  return postAt(_profile.ajaxPath, command, hint, response);
+}
+
+bool CHQLogoWeb::postAt(const String& path, const String& command,
+                        const String& hint, String& response) {
   response = "";
   if (!safeText(_host, 253) || _host.indexOf('/') >= 0 || _host.indexOf(':') >= 0 ||
       _host.indexOf('@') >= 0 || _host.indexOf('?') >= 0 || _host.indexOf('#') >= 0 || !_port ||
-      command.isEmpty() || command.length() > 2048)
+      !safeText(path, 128) || path[0] != '/' || path.indexOf('#') >= 0 ||
+      command.length() > 2048)
     return fail(CHQLogoError::InvalidArgument, "Host/puerto/comando inválido");
-  if (!_transport->post(_host, _port, _profile.ajaxPath, command, hint, _options, response, _diagnostics)) {
+  _options.sessionIdHeader = _usingSessionId;
+  if (!_transport->post(_host, _port, path, command, hint, _options, response, _diagnostics)) {
     response = "";
     if (_diagnostics.error == CHQLogoError::None) _diagnostics.error = CHQLogoError::ConnectionFailed;
     if (_diagnostics.error == CHQLogoError::WifiDisconnected || _diagnostics.httpStatus == 401 ||
@@ -481,10 +501,26 @@ bool CHQLogoWeb::login(const String& password) {
   resetDiagnostics();
   endSession();
   if (password.length() > 256) return fail(CHQLogoError::InvalidArgument, "Contraseña demasiado larga");
+  if (_profile.authentication == CHQLogoAuth::SessionSha256) return loginSession(password);
+  return loginLegacy(password);
+}
+
+bool CHQLogoWeb::loginLegacy(const String& password) {
   const uint32_t a = esp_random(), b = esp_random(), c = esp_random(), d = esp_random();
   String response;
   const String request = "UAMCHAL:3,4," + String(a) + "," + String(b) + "," + String(c) + "," + String(d);
-  if (!post(request, "p", response)) return false;
+  if (!post(request, "p", response)) {
+    // Solo el rechazo HTTP del reto inicial habilita probar el otro login.
+    // No se cambia de metodo ante clave rechazada, timeout o fallo de una lectura/escritura.
+    const int status = _diagnostics.httpStatus;
+    if (_profile.authentication == CHQLogoAuth::Auto &&
+        _diagnostics.error == CHQLogoError::HttpError &&
+        (status == 403 || status == 404 || status == 405)) {
+      resetDiagnostics();
+      return loginSession(password);
+    }
+    return false;
+  }
   chqlogo::Challenge challenge{};
   if (!chqlogo::parseChallenge(response.c_str(), response.length(), _profile.successCode,
                                _profile.hintLength, challenge))
@@ -500,6 +536,40 @@ bool CHQLogoWeb::login(const String& password) {
                            _profile.hintLength, session))
     return fail(CHQLogoError::UnexpectedResponse, "Respuesta UAMLOGIN inválida");
   _sessionHint = session;
+  if (_sessionHint != session) return fail(CHQLogoError::OutOfMemory, "No se pudo conservar la sesion");
+  if (_debug) _debug->println("Login: AJAX clasico");
+  return true;
+}
+
+bool CHQLogoWeb::loginSession(const String& password) {
+  _usingSessionId = true;
+  String response;
+  if (!postAt("/login/guest/challenge", "", "", response)) return false;
+  char challenge[65]{}, session[65]{}, passwordHash[65]{}, loginHash[65]{};
+  if (!chqlogo::parseSession(response.c_str(), response.length(), challenge)) {
+    endSession();
+    return fail(CHQLogoError::UnexpectedResponse, "Reto Session-Id invalido");
+  }
+  chqlogo::sha256Hex(password.c_str(), password.length(), passwordHash);
+  String proofInput;
+  const size_t size = _profile.webUser.length() + 128;
+  if (!proofInput.reserve(size) || !proofInput.concat(_profile.webUser) ||
+      !proofInput.concat(passwordHash) || !proofInput.concat(challenge)) {
+    endSession();
+    return fail(CHQLogoError::OutOfMemory, "No se pudo preparar el login");
+  }
+  chqlogo::sha256Hex(proofInput.c_str(), proofInput.length(), loginHash);
+  if (!postAt("/login/guest/login", loginHash, challenge, response)) return false;
+  if (!chqlogo::parseSession(response.c_str(), response.length(), session)) {
+    endSession();
+    return fail(CHQLogoError::ProtocolRejected, "Login Session-Id rechazado o respuesta invalida");
+  }
+  _sessionHint = session;
+  if (_sessionHint != session) {
+    endSession();
+    return fail(CHQLogoError::OutOfMemory, "No se pudo conservar la sesion");
+  }
+  if (_debug) _debug->println("Login: Session-Id/SHA-256");
   return true;
 }
 
@@ -534,8 +604,13 @@ bool CHQLogoWeb::parseScalar(const String& response, const String& id, uint8_t d
 
 String CHQLogoWeb::scalarCommand(const String& verb, const String& requestId, uint16_t kind,
                                  uint16_t address, uint8_t size, bool symbolic) const {
-  if (symbolic)
-    return verb + ":_local_=" + requestId + ",AM.." + String(size) + ":" + String(address) + "-1";
+  if (symbolic || (_usingSessionId && kind == _profile.mType)) {
+    const bool digital = kind == _profile.mType;
+    // M numerica usa indice 0; el formato simbolico del portal usa M1, M2, etc.
+    const uint32_t index = static_cast<uint32_t>(address) + (digital ? 1 : 0);
+    return verb + ":_local_=" + requestId + (digital ? ",M.." : ",AM..") +
+        String(size) + ":" + String(index) + "-1";
+  }
   return verb + ":" + requestId + "," + String(kind) + "," + String(_profile.area) + "," +
       String(address) + "," + String(size) + ",1";
 }

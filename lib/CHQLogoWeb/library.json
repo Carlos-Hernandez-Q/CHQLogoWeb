@@ -1,6 +1,6 @@
 {
   "name": "CHQLogoWeb",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "ESP32 client for the Siemens LOGO! 8 web server. Automatic sessions, cached M/AM reads and writes verified by readback.",
   "keywords": ["esp32", "siemens", "logo", "http", "ajax", "automation"],
   "authors": [{"name": "CHQ Labs", "url": "https://github.com/Carlos-Hernandez-Q"}],

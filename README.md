@@ -1,8 +1,10 @@
-# CHQLogoWeb 1.5.0
+# CHQLogoWeb 1.6.0
 
 Librería de CHQ Labs para leer y escribir marcas de un Siemens LOGO! 8 desde ESP32 mediante su portal web.
 
 El programa administra el Wi-Fi. La librería mantiene la sesión del LOGO, consulta las marcas y comprueba las escrituras por lectura. No necesita Modbus ni un servidor intermedio.
+
+El arranque simple admite el login AJAX anterior y el login Session-Id/SHA-256 observado en el segundo PLC. La selección automática ocurre durante el reto inicial; no envía escrituras para detectar el equipo ni cambia HTTP por HTTPS.
 
 ## Uso
 
@@ -27,6 +29,8 @@ logo.setM(2, salidaDeseada);  // bool definido por tu programa.
 Ejecuta `logo.loop()` con frecuencia. Las lecturas locales son rápidas, pero una consulta HTTP dentro de `loop()` puede bloquear. Evita `delay()` largos en tu programa.
 
 ## Instalación
+
+Descarga la librería completa: [CHQLogoWeb-1.6.0.zip](dist/CHQLogoWeb-1.6.0.zip).
 
 - **PlatformIO:** copia la carpeta `lib/CHQLogoWeb` completa dentro de `lib/` de tu proyecto.
 - **Arduino IDE:** instala el ZIP de la librería desde **Programa > Incluir librería > Añadir biblioteca .ZIP**, o copia `lib/CHQLogoWeb` a `Documentos/Arduino/libraries/CHQLogoWeb`.
@@ -82,7 +86,7 @@ La unidad ensayada aplica AM y responde `e=16`. El ejemplo de escritura habilita
 - `Matched` significa coincidencia en una lectura posterior; no demuestra una transición si ya tenía ese valor.
 - Una instancia debe usarse desde una sola tarea.
 
-Se comprobó login, lectura M1/M2, accionamiento de Q1 mediante M2 y lectura/escritura de AM2 en una unidad física. Aún falta registrar su referencia y firmware; no se anuncia compatibilidad certificada con todas las versiones de LOGO! 8. TCP_NODELAY está habilitado, con mejora de velocidad pendiente de medición física.
+Se comprobó login, lectura M1/M2, accionamiento de Q1 mediante M2 y lectura/escritura de AM2 en la primera unidad física. En una segunda unidad se comprobó por Ethernet el login Session-Id/SHA-256 y la lectura de M1/M2/AM1/AM2 desde una prueba en PC; se observaron ceros válidos. La integración C++ tiene pruebas locales; falta cargarla al ESP32 y comprobar cambios de valor en ese PLC. Aún falta registrar las referencias y firmwares; no se anuncia compatibilidad certificada con todas las versiones de LOGO! 8. TCP_NODELAY está habilitado, con mejora de velocidad pendiente de medición física.
 
 ## Manual y documentación
 

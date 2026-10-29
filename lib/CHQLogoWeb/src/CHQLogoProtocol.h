@@ -21,6 +21,9 @@ struct ScalarReply {
 };
 
 uint32_t crc32(const char* bytes, size_t length);
+void sha256Hex(const char* bytes, size_t length, char (&hex)[65]);
+// Respuesta del login nuevo: "ok: <Session-Id>". Token de 64 caracteres.
+bool parseSession(const char* bytes, size_t length, char (&session)[65]);
 bool parseUInt32(const char* bytes, size_t length, uint32_t& value);
 bool parseHex(const char* bytes, size_t length, uint16_t& value);
 bool parseStatus(const char* bytes, size_t length, uint16_t& status);

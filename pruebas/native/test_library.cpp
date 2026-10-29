@@ -1098,6 +1098,173 @@ int main() {
       fake::wifiConnected = false; fake::now = UINT32_MAX - 10;
       CHECK(!logo.waitUntilReady(20)); CHECK(fake::now == 9 && fake::requests.empty());
     }},
+    {"SHA256 standard vectors and padding boundaries", [] {
+      const std::vector<std::pair<std::string,std::string>> vectors = {
+        {"", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+        {"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+        {std::string(55,'a'), "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"},
+        {std::string(56,'a'), "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"},
+        {std::string(63,'a'), "7d3e74a05d7db15bce4ad9ec0658ea98e3f06eeecf16b4c6fff2da457ddc2f34"},
+        {std::string(64,'a'), "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"},
+        {std::string(65,'a'), "635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0"},
+        {std::string(119,'a'), "31eba51c313a5c08226adf18d4a359cfdfd8d2e816b13f4af952f7ea6584dcfb"},
+        {std::string(120,'a'), "2f3d335432c70b580af0e8e1b3674a7c020d683aa5f73aaaedfdc55af904c21c"},
+        {std::string(128,'a'), "6836cf13bac400e9105071cd6af47084dfacad4e5e302c94bfed24e013afb73e"},
+        {std::string(256,'a'), "02d7160d77e18c6447be80c2e355c7ed4388545271702c50253b0914c65ce5fe"},
+        {std::string(1000000,'a'), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"}
+      };
+      for (const auto& vector : vectors) {
+        char hex[65]{}; chqlogo::sha256Hex(vector.first.data(),vector.first.size(),hex);
+        CHECK(vector.second == hex);
+      }
+    }},
+    {"Session-Id envelope accepts portal whitespace but rejects injection and truncation", [] {
+      const std::string token(64,'A'); char parsed[65]{};
+      for (const auto& response : {"ok:"+token, "ok: "+token, "\r\nok: \t"+token+" \r\n"}) {
+        CHECK(chqlogo::parseSession(response.data(),response.size(),parsed));
+        CHECK(token == parsed);
+      }
+      for (const auto& response : {"ok:"+token+"x", "ok:"+token.substr(1), "err: "+token,
+                                  "ok:"+token+":extra", "ok:"+token+"\r\nX: injected"}) {
+        strcpy(parsed,"unchanged"); CHECK(!chqlogo::parseSession(response.data(),response.size(),parsed));
+        CHECK(std::string(parsed) == "unchanged");
+      }
+      CHECK(!chqlogo::parseSession(nullptr,0,parsed));
+    }},
+    {"automatic login keeps the legacy request sequence on the first PLC", [] {
+      CHQLogoWeb logo("127.0.0.1"); CHECK(logo.begin(CHQLogoConfig("secret")));
+      CHECK(logo.profile().authentication == CHQLogoAuth::Auto);
+      login(logo,"secret"); CHECK(fake::requests.size() == 2);
+      CHECK(fake::requests[0].find("POST /AJAX HTTP/1.1") == 0);
+      CHECK(fake::requests[1].find("Security-Hint: "+TEMP_HINT+"\r\n") != std::string::npos);
+      CHECK(fake::requests[1].find("Cookie:") == std::string::npos);
+      CHECK(fake::requests[1].find("Content-Type: application/x-www-form-urlencoded\r\n") != std::string::npos);
+    }},
+    {"automatic login switches only after a rejected initial legacy challenge", [] {
+      for (int code : {403,404,405}) {
+        fake::reset(); CHQLogoWeb logo("127.0.0.1"); CHECK(logo.begin(CHQLogoConfig("secret")));
+        raw("HTTP/1.1 "+std::to_string(code)+" Unavailable\r\nContent-Length: 0\r\n\r\n");
+        queue("ok: "+std::string(64,'A')); queue("ok: "+std::string(64,'B'));
+        CHECK(logo.login("secret") && logo.isAuthenticated()); CHECK(fake::requests.size() == 3);
+        CHECK(fake::requests[1].find("POST /login/guest/challenge HTTP/1.1") == 0 && body(1).empty());
+        CHECK(fake::requests[1].find("Security-Hint:") == std::string::npos);
+        CHECK(fake::requests[1].find("Cookie:") == std::string::npos);
+        CHECK(fake::requests[2].find("POST /login/guest/login HTTP/1.1") == 0);
+        CHECK(fake::requests[2].find("Content-Type: text/plain;charset=UTF-8\r\n") != std::string::npos);
+        CHECK(fake::requests[2].find("Cookie: Session-Id="+std::string(64,'A')+"\r\n") != std::string::npos);
+        CHECK(body(2) == "05d5de735279a365c1387e796e92aa72527c3bf666f815fe9a32f4750ffa36e5");
+        CHECK(fake::requests[2].find("secret") == std::string::npos);
+        queue("<rs><r i='v1' e='0' v='00'/></rs>"); queue("<rs><r i='v2' e='0' v='01'/></rs>");
+        bool value = false; CHECK(logo.readM(2,value) && value);
+        CHECK(body(3) == "GETVARS:_local_=v1,M..1:2-1");
+        CHECK(fake::requests[3].find("Cookie: Session-Id="+std::string(64,'B')+"\r\n") != std::string::npos);
+      }
+    }},
+    {"explicit SessionSha256 validates UTF8 and reads signed analog plus digital writes", [] {
+      CHQLogoWeb logo("127.0.0.1"); auto p = CHQLogoProfile::logo8AjaxExperimental();
+      p.authentication = CHQLogoAuth::SessionSha256; p.readAnalog = p.writeAnalog = true;
+      CHECK(logo.setProfile(p)); queue("ok: "+std::string(64,'A')); queue("ok: "+std::string(64,'B'));
+      CHECK(logo.login(String("clave\xc3\xb1")) && fake::requests.size() == 2);
+      CHECK(body(1) == "0e8aba4e9b065775885facb43f67185e553fbf8dd756fe37316981c8144b1ceb");
+      queue("<rs><r i='v0' e='0' v='FF88'/></rs>"); int16_t analog = 0;
+      CHECK(logo.readAM(2,analog) && analog == -120);
+      CHECK(body(2) == "GETVARS:_local_=v1,AM..4:2-1");
+      queue("<rs><r i='v0' e='0'/></rs>"); CHECK(logo.writeM(2,true));
+      CHECK(body(3) == "SETVARS:_local_=v0,M..1:2-1,01");
+      queue("<rs><r i='v0' e='0'/></rs>"); CHECK(logo.writeAM(2,40));
+      CHECK(body(4) == "SETVARS:_local_=v0,AM..4:2-1,0028");
+    }},
+    {"automatic login does not switch methods after a password rejection or transport failure", [] {
+      for (int status : {401,403,404,405}) {
+        fake::reset(); CHQLogoWeb logo("127.0.0.1"); CHECK(logo.begin(CHQLogoConfig("secret")));
+        queue("700,"+TEMP_HINT+",123456");
+        raw("HTTP/1.1 "+std::to_string(status)+" Rejected\r\nContent-Length: 0\r\n\r\n");
+        CHECK(!logo.login("secret") && !logo.isAuthenticated()); CHECK(fake::requests.size() == 2);
+      }
+      for (int status : {401,429,500}) {
+        fake::reset(); CHQLogoWeb logo("127.0.0.1"); CHECK(logo.begin(CHQLogoConfig("secret")));
+        raw("HTTP/1.1 "+std::to_string(status)+" Rejected\r\nContent-Length: 0\r\n\r\n");
+        CHECK(!logo.login("secret") && fake::requests.size() == 1);
+      }
+      fake::reset(); InjectedTransport transport; transport.success = false; transport.status = 403;
+      transport.error = CHQLogoError::Timeout;
+      CHQLogoWeb logo("127.0.0.1",80,&transport); CHECK(logo.begin(CHQLogoConfig("secret")));
+      CHECK(!logo.login("secret") && transport.calls == 1);
+    }},
+    {"legacy-only profile never probes a different authentication endpoint", [] {
+      CHQLogoWeb logo("127.0.0.1");
+      raw("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+      CHECK(!logo.login("secret") && fake::requests.size() == 1);
+      auto p = logo.profile(); p.authentication = static_cast<CHQLogoAuth>(99);
+      CHECK(!logo.setProfile(p)); CHECK(logo.diagnostics().error == CHQLogoError::InvalidArgument);
+    }},
+    {"Session login rejects malformed challenges without sending password proof", [] {
+      for (const auto& response : {std::string("err: unavailable"), "ok: "+std::string(63,'A'),
+                                   "ok: "+std::string(64,'A')+"\r\nInjected: x"}) {
+        fake::reset(); CHQLogoWeb logo("127.0.0.1"); auto p = logo.profile();
+        p.authentication = CHQLogoAuth::SessionSha256; CHECK(logo.setProfile(p)); queue(response);
+        CHECK(!logo.login("secret") && !logo.isAuthenticated() && fake::requests.size() == 1);
+        CHECK(logo.diagnostics().error == CHQLogoError::UnexpectedResponse);
+      }
+    }},
+    {"Session login rejects bad credentials and never prints tokens or proof", [] {
+      CapturePrint output; CHQLogoWeb logo("127.0.0.1"); CHQLogoConfig config("secret","Web User",&output);
+      config.profile.authentication = CHQLogoAuth::SessionSha256; CHECK(logo.begin(config));
+      queue("ok: "+std::string(64,'A')); queue("error: login failed");
+      CHECK(!logo.loop() && !logo.isAuthenticated() && fake::requests.size() == 2);
+      CHECK(logo.diagnostics().error == CHQLogoError::ProtocolRejected);
+      CHECK(output.text.find("secret") == std::string::npos && output.text.find(std::string(64,'A')) == std::string::npos);
+      CHECK(output.text.find(body(1)) == std::string::npos);
+    }},
+    {"Session startup waits for two reads and does not send pending writes", [] {
+      CHQLogoWeb logo("127.0.0.1"); CHQLogoConfig config("secret");
+      config.profile.authentication = CHQLogoAuth::SessionSha256;
+      CHECK(logo.begin(config) && logo.watchM(1) && logo.setM(2,true));
+      queue("ok: "+std::string(64,'A')); queue("ok: "+std::string(64,'B'));
+      queue("<rs><r i='v1' e='0' v='00'/></rs>"); queue("<rs><r i='v2' e='0' v='01'/></rs>");
+      CHECK(logo.waitUntilReady(100) && logo.availableM(1) && logo.readM(1));
+      CHECK(fake::requests.size() == 4 && body(2) == "GETVARS:_local_=v1,M..1:1-1");
+      CHECK(logo.writeStateM(2) == CHQLogoWriteState::Pending);
+      queue("<rs><r i='v0' e='0'/></rs>"); CHECK(logo.loop());
+      CHECK(body(4) == "SETVARS:_local_=v0,M..1:2-1,01");
+      queue("<rs><r i='v1' e='0' v='01'/></rs>"); CHECK(logo.loop());
+      CHECK(logo.writeStateM(2) == CHQLogoWriteState::Matched);
+      CHECK(logo.setM(2,true)); CHECK(fake::requests.size() == 6);
+    }},
+    {"Session transport failure invalidates cache and does not replay an attempted write", [] {
+      CHQLogoWeb logo("127.0.0.1"); auto config = fixedConfig("secret");
+      config.profile.authentication = CHQLogoAuth::SessionSha256;
+      CHECK(logo.begin(config) && logo.setM(2,true));
+      queue("ok: "+std::string(64,'A')); queue("ok: "+std::string(64,'B')); CHECK(logo.loop());
+      queue("<rs><r i='v0' e='0'/></rs>"); CHECK(logo.loop());
+      raw("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n"); CHECK(!logo.loop());
+      CHECK(!logo.isAuthenticated() && !logo.availableM(2)); fake::now += 3000;
+      queue("ok: "+std::string(64,'C')); queue("ok: "+std::string(64,'D')); CHECK(logo.loop());
+      queue("<rs><r i='v1' e='0' v='01'/></rs>"); CHECK(logo.loop());
+      unsigned writes = 0; for (size_t i = 0; i < fake::requests.size(); ++i)
+        if (body(i).find("SETVARS:") == 0) ++writes;
+      CHECK(writes == 1);
+      CHECK(fake::requests.back().find("Cookie: Session-Id="+std::string(64,'D')) != std::string::npos);
+    }},
+    {"Session login preserves HTTPS and does not fall back to plain HTTP", [] {
+      CHQLogoWeb logo("127.0.0.1"); CHQLogoConfig config("secret");
+      CHECK(logo.useHTTPS("trusted-ca",443) && logo.begin(config));
+      raw("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+      queue("ok: "+std::string(64,'A')); queue("ok: "+std::string(64,'B'));
+      CHECK(logo.login("secret") && logo.connectionOptions().https);
+      CHECK(fake::connectedPort == 443 && fake::caCertificate == "trusted-ca");
+      CHECK(fake::requests.size() == 3);
+      for (const auto& request : fake::requests)
+        CHECK(request.find("Host: 127.0.0.1:443\r\n") != std::string::npos);
+    }},
+    {"Session proof allocation failure fails before sending the login hash", [] {
+      CHQLogoWeb logo("127.0.0.1"); auto p = logo.profile();
+      p.authentication = CHQLogoAuth::SessionSha256; CHECK(logo.setProfile(p));
+      InjectedTransport transport; CHQLogoWeb injected("127.0.0.1",80,&transport); CHECK(injected.setProfile(p));
+      transport.responses.push_back(("ok: "+std::string(64,'A')).c_str()); fake::allowStringReserve = false;
+      CHECK(!injected.login("secret") && !injected.isAuthenticated() && transport.calls == 1);
+      CHECK(injected.diagnostics().error == CHQLogoError::OutOfMemory);
+    }},
     {"header budget and stalled request writes are bounded", [] {
       std::string response = "HTTP/1.1 200 OK\r\n";
       for (unsigned i = 0; i < 1500; ++i) response += "X: a\r\n";
